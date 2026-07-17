@@ -1,0 +1,53 @@
+ervices:
+  warehouse-db:
+    image: postgres:15
+    container_name: warehouse-db
+    environment:
+      POSTGRES_USER: ${WAREHOUSE_DB_USER}
+      POSTGRES_PASSWORD: ${WAREHOUSE_DB_PASSWORD}
+      POSTGRES_DB: ${WAREHOUSE_DB_NAME}
+    ports:
+      - "5433:5432"
+    volumes:
+      - warehouse-data:/var/lib/postgresql/data
+
+  airflow-db:
+    image: postgres:15
+    container_name: airflow-db
+    environment:
+      POSTGRES_USER: ${AIRFLOW_DB_USER}
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD}
+      POSTGRES_DB: ${AIRFLOW_DB_NAME}
+    volumes:
+      - airflow-db-data:/var/lib/postgresql/data
+
+  airflow:
+    image: apache/airflow:2.9.3
+    container_name: airflow
+    depends_on:
+      - airflow-db
+      - warehouse-db
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@airflow-db/${AIRFLOW_DB_NAME}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    ports:
+      - "8085:8080"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./data:/opt/airflow/data
+      - ./sql:/opt/airflow/sql
+    command: standalone
+
+  jupyter:
+    image: jupyter/scipy-notebook:latest
+    container_name: jupyter
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./:/home/jovyan/work
+    command: start-notebook.sh --NotebookApp.token=${JUPYTER_TOKEN} --NotebookApp.password=''
+
+volumes:
+  warehouse-data:
+  airflow-db-data:
