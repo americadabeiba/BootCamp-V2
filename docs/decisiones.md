@@ -5,7 +5,7 @@ external_ref en la tabla customer se refiere a student
 
 
 ## Hallazgo: vínculo university-billing
-- billing.customers.external_ref coincide en formato y valor con university.students.student_id
+- billing.customers.external_ref coincide en formato y valor con bronze.university_students.student_id
 - students=5000, customers=10000 → máx. 50% de customers tienen estudiante asociado
 - Verificado: [N] de 5000 estudiantes encontrados en customers.external_ref
 - Nombre/país no coinciden entre student y customer vinculados → hipótesis:
