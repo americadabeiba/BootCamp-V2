@@ -630,8 +630,68 @@ establecido en todo `src/`.
 consistente con que `bronze`/`silver`/`gold` en Postgres también se
 reconstruyen completos en cada corrida (§3, §5).
 
-**Se versionan en Git** (no están en `.gitignore`): a diferencia de un
-artefacto de build típico, acá el Parquet exportado es en sí mismo un
-entregable pedido explícitamente («Archivos Parquet — capas exportadas»),
-así que debe quedar en el repositorio como evidencia, no regenerarse fuera
-de él.
+---
+
+## 9. Validación del pipeline
+
+Implementado en `src/validate/validate_pipeline.py`, agregado como quinta y
+última tarea del DAG (`export_parquet >> validate_pipeline`). A diferencia
+de los pasos anteriores, esta tarea no transforma nada — solo lee conteos
+en cuatro puntos de la cadena y compara. Si algo no cuadra, termina con
+`sys.exit(1)`: Airflow marca la tarea (y la corrida) en rojo, que es lo que
+pide el criterio "Automatización... con manejo de errores" — un
+desajuste de conteos no debe pasar silencioso.
+
+**Cuatro reconciliaciones, en orden de la cadena real:**
+
+1. **CSV → Bronze**: cuenta filas de cada CSV en `data/raw/` con `pandas`
+   y las compara contra `bronze.<dominio>_<archivo>`. Deben coincidir
+   exacto — Bronze no transforma ni filtra nada (§5 de este documento, "Por
+   qué el Bronze exhaustivo importaba").
+2. **Bronze → Silver**: mismo criterio (conteo igual) para las 18 tablas,
+   con una sola excepción explícita: `university_grades`. Ahí el chequeo
+   no compara contra el conteo de Bronze, sino contra
+   `COUNT(DISTINCT (enrollment_id, assessment))` calculado sobre Bronze en
+   el momento — es la misma regla de deduplicación de §2.2/§4, expresada
+   como consulta en vez de como número fijo (`12.323`), para que la
+   validación siga siendo correcta aunque cambien los datos de origen.
+3. **Silver → Gold**: mapeo explícito de las 15 tablas Silver con
+   equivalente 1:1 en Gold (`SILVER_TO_GOLD` en el script). Las 3 que no
+   tienen equivalente (`university_professors`, `billing_invoice_items`,
+   `crm_opportunity_contacts`) se listan como **verificadas y fuera de
+   alcance por diseño** (§5.6), no se omiten en silencio — el reporte deja
+   explícito que la ausencia fue una decisión, no un olvido. `dim_fecha`
+   (generada, sin origen en Silver) y las 12 tablas `kpi_*` (agregadas, no
+   1:1 por definición) no entran en esta reconciliación por la misma
+   razón.
+4. **Postgres (gold) → Parquet**: para cada tabla de `bronze`/`silver`/`gold`,
+   compara el conteo en Postgres contra `len(pd.read_parquet(...))` del
+   archivo exportado en §8 — confirma que la exportación no truncó ni
+   duplicó filas.
+
+**Qué no revalida (y por qué):** las llaves huérfanas dentro de `gold` no
+se comprueban aquí porque ya están garantizadas estructuralmente por las
+`FOREIGN KEY` agregadas en cada `gold_*.sql` (§5) — Postgres no deja
+insertar una fila huérfana, así que un chequeo aparte sería redundante. Lo
+que sí valida este script es lo que **no** está protegido por una
+constraint: conteos entre capas y entre Postgres y los archivos exportados.
+
+**Probado con una falla real inyectada:** se borró una fila de
+`bronze.billing_products`, se corrió `validate_pipeline.py`, y detectó
+correctamente las 3 reconciliaciones afectadas
+(`csv->bronze`, `bronze->silver`, `parquet bronze.billing_products`) con
+`exit(1)`; se reconstruyó el pipeline completo después para restaurar el
+estado. Confirma que el script realmente compara, no solo imprime "OK".
+
+## 10. `docker/.env.example`
+
+`docker-compose.yml` lee credenciales desde variables de entorno
+(`WAREHOUSE_DB_USER`, `AIRFLOW_DB_PASSWORD`, `JUPYTER_TOKEN`, etc.) a
+través de un archivo `docker/.env` que está en `.gitignore` — correcto no
+versionar credenciales, pero eso dejaba a cualquiera que clonara el repo
+sin saber qué variables definir, y `docker compose up` fallaría o
+arrancaría con valores vacíos. Se agrega `docker/.env.example` (sí
+versionado) con valores de ejemplo para las 7 variables que
+`docker-compose.yml` espera, para que "levantar el ambiente desde cero"
+sea `cp docker/.env.example docker/.env` + `docker compose up`, sin tener
+que adivinar nombres de variables leyendo el YAML.

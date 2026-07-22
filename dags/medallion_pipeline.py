@@ -32,4 +32,9 @@ with DAG(
         bash_command="python3 /opt/airflow/src/transform/export_parquet.py",
     )
 
-    ingest_bronze >> build_silver >> build_gold >> export_parquet
+    validate_pipeline = BashOperator(
+        task_id="validate_pipeline",
+        bash_command="python3 /opt/airflow/src/validate/validate_pipeline.py",
+    )
+
+    ingest_bronze >> build_silver >> build_gold >> export_parquet >> validate_pipeline
