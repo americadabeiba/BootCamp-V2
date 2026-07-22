@@ -287,3 +287,116 @@ persistir un flag para "suscripción activa con `end_date` vencido" (§2.5) porq
 `CURRENT_DATE` cambia cada día y el flag quedaría obsoleto apenas se guarda; ese
 tipo de verificación relativa a "hoy" se deja como consulta de validación (no como
 columna materializada), para correrse en el momento en que se necesite.
+
+---
+
+## 5. Modelado Gold
+
+Implementado en `sql/gold/gold_00_dim_fecha.sql`, `gold_university.sql`,
+`gold_billing.sql`, `gold_crm.sql`, ejecutados por `src/transform/build_gold.py`
+(mismo patrón que Silver: `DROP TABLE` + `CREATE TABLE AS SELECT`, esquema
+`gold` completo y reconstruible desde `silver.*` en cada corrida).
+
+### 5.1 Por qué varias estrellas y no una sola
+
+Es una **constelación de hechos** (varias estrellas independientes, una por
+proceso de negocio, unidas solo por la dimensión compartida `dim_fecha`), no una
+megaestrella. Cada estrella tiene, además, **dos hechos a grano distinto** en vez
+de uno solo, porque forzar todo en una sola tabla de hechos mezclaría
+granularidades distintas (el error clásico que hay que evitar en modelado
+dimensional):
+
+| Dominio | Hecho "encabezado" (grano) | Hecho "detalle" (grano más fino) | Por qué separados |
+|---|---|---|---|
+| University | `fact_inscripciones` (1 fila = 1 `enrollment_id`) | `fact_notas` (1 fila = 1 `grade_id`) | una inscripción tiene varias notas (quiz/homework/midterm/final/project) |
+| Billing | `fact_facturas` (1 fila = 1 `invoice_id`) | `fact_pagos` (1 fila = 1 `payment_id`) | "cuánto se facturó" y "cuánto se cobró" son preguntas distintas — ya documentado en §2.5 que `invoices.total` casi nunca reconcilia con sus pagos/items |
+| CRM | `fact_oportunidades` (1 fila = 1 `opportunity_id`) | `fact_actividades` (1 fila = 1 `activity_id`) | "cuánto vendo" (pipeline) y "cuánto contacto genero" (engagement) son preguntas distintas |
+
+El hecho "detalle" no repite las dimensiones del "encabezado": las hereda
+navegando por la clave de negocio hacia el hecho encabezado (`fact_notas.
+enrollment_id` → `fact_inscripciones`; `fact_pagos.invoice_id` → `fact_facturas`;
+`fact_actividades.opportunity_id` → `fact_oportunidades`), igual que una factura
+y sus líneas.
+
+`leads` no tiene hecho ni dimensión propia — es `gold.mart_leads`, tabla
+analítica aislada conectada solo a `dim_fecha` (confirmado en §1.3: 0% de match
+hacia `contacts`, no hay FK real que modelar).
+
+### 5.2 `dim_fecha` — dimensión conformada
+
+Generada con `generate_series` sobre el rango 2015-01-01 a 2035-12-31 (cubre con
+margen las fechas observadas en `silver.*`, la más antigua 2018-01-01). Clave
+= `fecha_key` en formato `YYYYMMDD` (entero, ordenable, estándar Kimball); no
+necesita SCD porque una fecha nunca cambia de atributos.
+
+Cada hecho tiene tantas columnas `*_fecha_key` como fechas de negocio relevantes
+tenga (rol distinto de la misma dimensión): `fact_facturas` tiene
+`fecha_emision_key` **y** `fecha_vencimiento_key`; `fact_suscripciones` tiene
+`fecha_inicio_key` **y** `fecha_fin_key`; `fact_oportunidades` tiene
+`fecha_creacion_key` **y** `fecha_cierre_estimada_key`.
+
+### 5.3 Claves surrogate — SCD Tipo 1 (decisión explícita)
+
+Cada dimensión tiene `<entidad>_key` generado con
+`ROW_NUMBER() OVER (ORDER BY <clave_de_negocio>)` — determinístico (mismos datos
+de entrada → misma clave siempre) y sin historial: al reconstruir Gold, un
+cambio de atributo se sobrescribe, no genera una fila nueva. Se decidió así
+(sobre SCD Tipo 2 con `valid_from`/`valid_to`) porque el dataset es una carga
+estática/sintética, no un flujo real de actualizaciones en el tiempo — no hay
+una segunda carga que dispare cambios reales para justificar el costo de
+diseño y validación de un historial completo. Si en el futuro el pipeline pasa
+a cargas incrementales reales, este es el punto a revisar.
+
+Consecuencia de esta decisión: Gold, igual que Silver, es **completamente
+reconstruible** desde la capa anterior en cada corrida (no hay `MERGE`/`UPSERT`
+ni estado que preservar entre ejecuciones) — la única capa verdaderamente
+"durable" en el sentido de irremplazable es Bronze.
+
+### 5.4 Qué es dimensión, qué es medida, qué es dimensión degenerada
+
+- **Medida** (mide algo, número agregable): `fact_notas.score`/`weight`,
+  `fact_facturas.total`, `fact_pagos.amount`, `fact_oportunidades.amount`.
+  Ninguna es trivialmente aditiva a través de todas las dimensiones: `score`
+  y `weight` son porcentajes (se promedian, no se suman — ver query de ejemplo
+  más abajo); `amount` de oportunidades solo es sumable si se filtra por
+  `stage` (sumar oportunidades `lost` junto con `won` no significa nada de
+  negocio).
+- **Dimensión degenerada** (atributo descriptivo que vive en el hecho porque no
+  amerita tabla propia): `fact_inscripciones.status`, `fact_inscripciones.
+  attempt_number`, `fact_facturas.status`/`moneda`, `fact_pagos.metodo`,
+  `fact_oportunidades.etapa`, `fact_actividades.tipo`/`asunto`.
+- **Dimensión propiamente dicha**: todo lo que vive en `dim_*` — describe
+  quién/qué/dónde, nunca se agrega.
+- Columnas `_dq_*` heredadas de Silver se ubicaron en la dimensión o el hecho
+  según a qué grano pertenece el hallazgo original (ej.
+  `_dq_professor_dept_mismatch` → `dim_curso`, porque es un atributo del curso;
+  `_dq_outside_semester_range` → `fact_inscripciones`, porque es un atributo de
+  la inscripción).
+
+Verificado con datos reales tras `build_gold.py`: agrupar `fact_notas` por
+`dim_tipo_evaluacion` y promediar `score` da 74,80–75,14 según el tipo — consistente
+con lo ya visto en Bronze/Silver, confirmando que el join encabezado-detalle
+(`fact_notas` → `fact_inscripciones` → `dim_estudiante`/`dim_curso`) no perdió
+ni duplicó filas (47.677 en `fact_notas`, igual que `silver.university_grades`).
+
+### 5.5 `dim_curso` desnormaliza al profesor — no hay `dim_profesor`
+
+Decisión explícita: en vez de "snowflakear" (`dim_curso` → `dim_profesor` en
+tabla aparte), el nombre/apellido/departamento del profesor se trae directo a
+`dim_curso` como columnas denormalizadas. Sigue siendo posible agrupar "carga
+docente por profesor" agrupando `dim_curso` por `professor_id`/`profesor_nombre`
+sin necesitar una tabla adicional — es la técnica estándar de modelado
+dimensional (evitar joins de más en Gold a costa de un poco de redundancia
+controlada, aceptable porque `professor_id`↔nombre no cambia por fila).
+
+### 5.6 Fuera de alcance de esta primera versión (decisión de scope, no olvido)
+
+- `fact_invoice_items` (detalle a nivel de línea de factura): no se modeló esta
+  vez. Se agrega si una métrica de negocio concreta lo requiere (ej. "ingresos
+  por categoría de producto").
+- `crm_opportunity_contacts` (tabla puente N:N): no se modeló como *factless
+  fact table* esta vez; se retoma si se necesita analizar roles de contacto
+  por oportunidad.
+- Todas las conteos de filas Silver→Gold coinciden 1:1 en las 17 tablas
+  (`dim_fecha` es la única sin equivalente Silver, generada independientemente)
+  — verificado ejecutando `src/transform/build_gold.py`.

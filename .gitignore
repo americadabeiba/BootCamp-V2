@@ -3,3 +3,5 @@ docker/.env
 /src/ingest/.ipynb_checkpoints
 /src/ingest/__pycache__
 /.ipynb_checkpoints
+/notebooks/discovery/.ipynb_checkpoints
+/src/transform/__pycache__
