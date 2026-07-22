@@ -1,12 +1,3 @@
-# Decisiones del proyecto
-
-Documento único de decisiones, hallazgos de calidad y reglas aplicadas. Todo lo que
-antes vivía en `docs/hallazgos_calidad.md` se movió aquí (se eliminó ese archivo);
-de aquí en adelante toda decisión y todo hallazgo se documenta **solo en este
-archivo**.
-
----
-
 ## 1. Relaciones entre dominios (Bronze)
 
 ### 1.1 Vínculo university ↔ billing
@@ -630,6 +621,12 @@ establecido en todo `src/`.
 consistente con que `bronze`/`silver`/`gold` en Postgres también se
 reconstruyen completos en cada corrida (§3, §5).
 
+**Se versionan en Git** (no están en `.gitignore`): a diferencia de un
+artefacto de build típico, acá el Parquet exportado es en sí mismo un
+entregable pedido explícitamente («Archivos Parquet — capas exportadas»),
+así que debe quedar en el repositorio como evidencia, no regenerarse fuera
+de él.
+
 ---
 
 ## 9. Validación del pipeline
@@ -682,16 +679,3 @@ correctamente las 3 reconciliaciones afectadas
 (`csv->bronze`, `bronze->silver`, `parquet bronze.billing_products`) con
 `exit(1)`; se reconstruyó el pipeline completo después para restaurar el
 estado. Confirma que el script realmente compara, no solo imprime "OK".
-
-## 10. `docker/.env.example`
-
-`docker-compose.yml` lee credenciales desde variables de entorno
-(`WAREHOUSE_DB_USER`, `AIRFLOW_DB_PASSWORD`, `JUPYTER_TOKEN`, etc.) a
-través de un archivo `docker/.env` que está en `.gitignore` — correcto no
-versionar credenciales, pero eso dejaba a cualquiera que clonara el repo
-sin saber qué variables definir, y `docker compose up` fallaría o
-arrancaría con valores vacíos. Se agrega `docker/.env.example` (sí
-versionado) con valores de ejemplo para las 7 variables que
-`docker-compose.yml` espera, para que "levantar el ambiente desde cero"
-sea `cp docker/.env.example docker/.env` + `docker compose up`, sin tener
-que adivinar nombres de variables leyendo el YAML.
