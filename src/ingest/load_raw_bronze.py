@@ -14,6 +14,7 @@ SCHEMA = "bronze"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RAW_DATA_DIR = PROJECT_ROOT / "data" / "raw"
 
+
 def discover_csv_files():
     return sorted(RAW_DATA_DIR.glob("*/*.csv"))
 
@@ -28,13 +29,20 @@ def load_dataframe(csv_file: Path) -> pd.DataFrame:
         low_memory=False,
     )
 
-def load_table(engine, csv_file: Path):
+def add_ingestion_metadata(df: pd.DataFrame, csv_file: Path, ingested_at: pd.Timestamp) -> pd.DataFrame:
+    df["_source_domain"] = csv_file.parent.name
+    df["_source_file"] = csv_file.name
+    df["_ingested_at"] = ingested_at
+    return df
+
+def load_table(engine, csv_file: Path, ingested_at: pd.Timestamp):
     table = table_name(csv_file)
     print("=" * 70)
     print(f"Cargando: {csv_file.name}")
     print(f"Destino : {SCHEMA}.{table}")
 
     df = load_dataframe(csv_file)
+    df = add_ingestion_metadata(df, csv_file, ingested_at)
     print(f"Filas    : {len(df):,}")
     print(f"Columnas : {len(df.columns)}")
 
@@ -90,10 +98,14 @@ def load_raw_bronze():
         )
     print(f"\nCSV encontrados: {len(csv_files)}\n")
 
+    ingested_at = pd.Timestamp.now(tz="UTC").tz_localize(None)
+    print(f"Fecha de ingesta: {ingested_at.isoformat()}\n")
+
     for csv_file in csv_files:
         load_table(
             engine,
             csv_file,
+            ingested_at,
         )
     print("\n")
     print("=" * 70)
