@@ -548,3 +548,38 @@ en cada corrida.
   **todo estudiante tiene un cliente asociado**, no la mitad como podría
   sugerir el 50% de cobertura visto desde el lado de `customers` (10.000
   clientes, solo 5.000 con `external_ref`).
+
+---
+
+## 7. Automatización con Airflow
+
+Implementado en `dags/medallion_pipeline.py`. Tres tareas, dependencia lineal
+explícita: `ingest_bronze >> build_silver >> build_gold`. Cada tarea es un
+`BashOperator` que invoca el mismo script que hasta ahora se corría a mano
+(`src/ingest/load_raw_bronze.py`, `src/transform/build_silver.py`,
+`src/transform/build_gold.py`, este último ya incluye `gold_kpis.sql`) —
+el DAG no reimplementa lógica, solo orquesta lo que ya existía.
+
+**Por qué funciona sin cambiar los scripts:** los tres calculan
+`PROJECT_ROOT` subiendo dos niveles desde su propio archivo
+(`parents[2]`), y `docker-compose.yml` monta `../src`, `../sql` y `../data`
+directo bajo `/opt/airflow/` (`../src:/opt/airflow/src`, etc.) — dentro del
+contenedor, `PROJECT_ROOT` resuelve a `/opt/airflow`, exactamente donde
+están montados. El mismo script corre igual en local (`python3
+src/ingest/load_raw_bronze.py` desde la raíz del repo) y dentro de Airflow,
+sin variables de entorno ni rutas especiales para el DAG.
+
+**Idempotencia:** no es una propiedad nueva que haya que agregar para
+Airflow — ya la tenían los tres scripts desde antes (bronze hace
+`drop_table` + `create_table` por archivo; silver y gold hacen `DROP TABLE
+IF EXISTS ... CASCADE` + `CREATE TABLE AS SELECT` por tabla). Correr el DAG
+dos veces seguidas no duplica filas ni requiere `MERGE`/`UPSERT`.
+
+**`schedule=None` (disparo manual), no un cron:** el dataset es una carga
+estática y sintética (mismo argumento que la decisión de SCD Tipo 1 en
+§5.3) — no hay una fuente que deposite CSV nuevos todos los días para
+justificar una corrida programada. Automatizar aquí significa "un clic
+ejecuta las tres fases en orden con dependencias explícitas", no "corre
+solo a las 3am". Si en el futuro hay ingesta incremental real, este es el
+punto para pasar a `schedule="@daily"` (u otro cron).
+
