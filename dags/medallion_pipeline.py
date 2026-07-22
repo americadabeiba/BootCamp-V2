@@ -27,4 +27,9 @@ with DAG(
         bash_command="python3 /opt/airflow/src/transform/build_gold.py",
     )
 
-    ingest_bronze >> build_silver >> build_gold
+    export_parquet = BashOperator(
+        task_id="export_parquet",
+        bash_command="python3 /opt/airflow/src/transform/export_parquet.py",
+    )
+
+    ingest_bronze >> build_silver >> build_gold >> export_parquet

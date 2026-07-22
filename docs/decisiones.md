@@ -583,3 +583,55 @@ ejecuta las tres fases en orden con dependencias explícitas", no "corre
 solo a las 3am". Si en el futuro hay ingesta incremental real, este es el
 punto para pasar a `schedule="@daily"` (u otro cron).
 
+### 7.1 `dags/.airflowignore` y corrección de `.gitignore`
+
+Al correr el DAG por primera vez, `Fileloc` en la UI de Airflow apuntaba a
+`/opt/airflow/dags/.ipynb_checkpoints/medallion_pipeline-checkpoint.py`, no
+al archivo real — Jupyter monta todo el repo (`../:/home/jovyan/work` en
+`docker-compose.yml`), así que abrir el `.py` ahí genera un checkpoint
+dentro de `dags/`, y Airflow escanea esa carpeta de forma recursiva y lo
+toma como un DAG más. Se agrega `dags/.airflowignore` (patrones
+`\.ipynb_checkpoints` y `__pycache__`) para que Airflow ignore esas rutas
+sin importar dónde aparezcan.
+
+De paso se corrigió `.gitignore`: los patrones anteriores
+(`/notebooks/.ipynb_checkpoints`, `/src/ingest/.ipynb_checkpoints`) estaban
+anclados a una ruta exacta y no cubrían subcarpetas — por eso
+`notebooks/documentacion/.ipynb_checkpoints/documentación-checkpoint.ipynb`
+había quedado versionado en el commit `Cambios2` sin que nadie lo notara.
+Se reemplazan por `**/.ipynb_checkpoints/` y `**/__pycache__/` (cualquier
+profundidad) y se remueve el checkpoint que ya estaba trackeado.
+
+---
+
+## 8. Exportación a Parquet
+
+Implementado en `src/transform/export_parquet.py`, agregado como cuarta
+tarea del DAG (`build_gold >> export_parquet` en
+`dags/medallion_pipeline.py`).
+
+**Alcance: las tres capas, no solo Gold.** El enunciado pide "capas
+exportadas" (plural) y la estructura sugerida ya reserva `data/parquet/`
+como carpeta única — se interpretó como exportar `bronze`, `silver` y
+`gold` completos, no únicamente el modelo de negocio final. Salida:
+`data/parquet/<schema>/<tabla>.parquet`, un archivo por tabla, mismo
+nombre que en Postgres.
+
+**Cómo se lee cada tabla:** `pandas.read_sql` sobre el mismo `engine` de
+`src/ingest/db.py` que ya usan `load_raw_bronze.py`/`build_silver.py`/
+`build_gold.py`, y `DataFrame.to_parquet(engine="pyarrow")`. Se descartó
+usar `duckdb` (está en `requirements.txt` desde el commit inicial pero no
+se usa en ningún script todavía) para no mezclar dos formas distintas de
+leer Postgres en el mismo pipeline — `pandas`/`sqlalchemy` ya es el patrón
+establecido en todo `src/`.
+
+**Idempotencia:** cada corrida sobrescribe el `.parquet` de cada tabla
+(mismo nombre de archivo) — no acumula versiones ni duplica filas,
+consistente con que `bronze`/`silver`/`gold` en Postgres también se
+reconstruyen completos en cada corrida (§3, §5).
+
+**Se versionan en Git** (no están en `.gitignore`): a diferencia de un
+artefacto de build típico, acá el Parquet exportado es en sí mismo un
+entregable pedido explícitamente («Archivos Parquet — capas exportadas»),
+así que debe quedar en el repositorio como evidencia, no regenerarse fuera
+de él.
