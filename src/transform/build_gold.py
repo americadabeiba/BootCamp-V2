@@ -13,6 +13,7 @@ SQL_FILES = [
     "gold_university.sql",
     "gold_billing.sql",
     "gold_crm.sql",
+    "gold_kpis.sql",
 ]
 
 

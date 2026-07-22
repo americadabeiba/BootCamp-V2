@@ -1,10 +1,3 @@
--- Gold — dim_fecha (dimensión conformada)
--- Compartida por las tres estrellas (university, billing, crm) y por mart_leads.
--- Justificación del diseño: docs/decisiones.md, sección "5. Modelado Gold".
--- Rango 2015-01-01..2035-12-31: cubre con margen todas las fechas observadas en
--- silver.* (la más antigua es 2018-01-01, la más futura ~2026) sin depender de
--- recalcular el rango en cada corrida.
-
 CREATE SCHEMA IF NOT EXISTS gold;
 
 DROP TABLE IF EXISTS gold.dim_fecha CASCADE;

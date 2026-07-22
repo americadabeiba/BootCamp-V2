@@ -66,6 +66,28 @@ excepciones **esperadas por diseño**:
 Una actividad se asocia a un contacto **o** a una oportunidad, no necesariamente a
 ambos → no se tratan como defecto ni se fuerza `NOT NULL` en Silver.
 
+**Detalle verificado sobre `silver.crm_activities` (no estaba cuantificado
+antes de esta revisión):** la relación no es una disyuntiva exclusiva. De las
+20.000 actividades:
+
+| Caso | Filas | % |
+|---|---|---|
+| Con contacto y sin oportunidad | 7.004 | 35,0% |
+| Con oportunidad y sin contacto | 2.995 | 15,0% |
+| Con ambos a la vez | 7.020 | 35,1% |
+| Sin ninguno de los dos | 2.981 | 14,9% |
+
+Los primeros dos casos ya estaban cubiertos por la redacción original ("uno u
+otro"). Los otros dos no: **7.020 actividades (35,1%) están ligadas a un
+contacto y a una oportunidad simultáneamente**, y **2.981 (14,9%) no tienen
+ninguna de las dos referencias**. No es un error de join en Gold — se
+verificó directamente sobre `silver.crm_activities`, antes de cualquier join.
+No se conserva evidencia suficiente en el dataset para saber si el segundo
+grupo (sin contacto ni oportunidad) corresponde a actividades a nivel de
+cuenta que el generador de datos no etiquetó, o a un dato faltante real; se
+deja como hallazgo abierto y no bloquea el modelado de `fact_actividades`
+(ambas referencias ya son nullable por diseño, ver §5.1 y `sql/gold/gold_crm.sql`).
+
 ### 2.2 Duplicados
 
 | Tabla | Hallazgo | Magnitud | Investigado |
@@ -301,22 +323,37 @@ Implementado en `sql/gold/gold_00_dim_fecha.sql`, `gold_university.sql`,
 
 Es una **constelación de hechos** (varias estrellas independientes, una por
 proceso de negocio, unidas solo por la dimensión compartida `dim_fecha`), no una
-megaestrella. Cada estrella tiene, además, **dos hechos a grano distinto** en vez
-de uno solo, porque forzar todo en una sola tabla de hechos mezclaría
-granularidades distintas (el error clásico que hay que evitar en modelado
-dimensional):
+megaestrella. University y CRM tienen **dos hechos a grano distinto** (patrón
+encabezado-detalle); Billing tiene **tres hechos independientes** (no es un
+encabezado con dos detalles — ver corrección más abajo). Forzar todo en una
+sola tabla de hechos mezclaría granularidades distintas (el error clásico que
+hay que evitar en modelado dimensional):
 
 | Dominio | Hecho "encabezado" (grano) | Hecho "detalle" (grano más fino) | Por qué separados |
 |---|---|---|---|
 | University | `fact_inscripciones` (1 fila = 1 `enrollment_id`) | `fact_notas` (1 fila = 1 `grade_id`) | una inscripción tiene varias notas (quiz/homework/midterm/final/project) |
-| Billing | `fact_facturas` (1 fila = 1 `invoice_id`) | `fact_pagos` (1 fila = 1 `payment_id`) | "cuánto se facturó" y "cuánto se cobró" son preguntas distintas — ya documentado en §2.5 que `invoices.total` casi nunca reconcilia con sus pagos/items |
 | CRM | `fact_oportunidades` (1 fila = 1 `opportunity_id`) | `fact_actividades` (1 fila = 1 `activity_id`) | "cuánto vendo" (pipeline) y "cuánto contacto genero" (engagement) son preguntas distintas |
 
 El hecho "detalle" no repite las dimensiones del "encabezado": las hereda
 navegando por la clave de negocio hacia el hecho encabezado (`fact_notas.
-enrollment_id` → `fact_inscripciones`; `fact_pagos.invoice_id` → `fact_facturas`;
-`fact_actividades.opportunity_id` → `fact_oportunidades`), igual que una factura
-y sus líneas.
+enrollment_id` → `fact_inscripciones`; `fact_actividades.opportunity_id` →
+`fact_oportunidades`), igual que una factura y sus líneas.
+
+**Corrección: Billing no es un par encabezado-detalle, son tres hechos
+independientes.**
+
+| Hecho | Grano | Proceso de negocio |
+|---|---|---|
+| `fact_suscripciones` | 1 fila = 1 `subscription_id` | contrato/suscripción del cliente a un producto |
+| `fact_facturas` | 1 fila = 1 `invoice_id` | cuánto se facturó |
+| `fact_pagos` | 1 fila = 1 `payment_id` | cuánto se cobró (referencia a `fact_facturas.invoice_id`, patrón encabezado-detalle **entre estas dos**) |
+
+`fact_suscripciones` **no** es detalle ni encabezado de `fact_facturas`:
+verificado que `bronze.billing_invoices` no tiene columna `subscription_id`
+(ni ninguna otra tabla Bronze la vincula), por lo tanto no existe FK
+reconstruible entre una suscripción y las facturas que generó — son tres
+preguntas de negocio distintas ("qué contraté", "cuánto se facturó", "cuánto
+se cobró") sin jerarquía entre sí, cada una con su propio hecho.
 
 `leads` no tiene hecho ni dimensión propia — es `gold.mart_leads`, tabla
 analítica aislada conectada solo a `dim_fecha` (confirmado en §1.3: 0% de match
@@ -400,3 +437,114 @@ controlada, aceptable porque `professor_id`↔nombre no cambia por fila).
 - Todas las conteos de filas Silver→Gold coinciden 1:1 en las 17 tablas
   (`dim_fecha` es la única sin equivalente Silver, generada independientemente)
   — verificado ejecutando `src/transform/build_gold.py`.
+
+### 5.7 Puente entre las constelaciones university y billing
+
+`dim_fecha` conecta las tres estrellas por tiempo, pero **no** representa la
+relación real entre negocios que sí existe: `billing.customers.external_ref`
+↔ `university.students.student_id` (verificada en Bronze, §1.1 — 5.000 de
+5.000 `external_ref` no nulos matchean un `student_id` real, 0 huérfanos,
+relación 1:1). Hasta esta revisión esa relación solo estaba documentada en
+Bronze y no se reflejaba como relación declarada en el modelo Gold.
+
+Se agrega ahora `ALTER TABLE gold.dim_cliente ADD FOREIGN KEY (external_ref)
+REFERENCES gold.dim_estudiante (student_id)` en `sql/gold/gold_billing.sql`
+(se ejecuta después de `gold_university.sql`, que ya crea `dim_estudiante`).
+Es **nullable** a propósito: solo 5.000 de 10.000 clientes tienen estudiante
+asociado, y no tiene sentido de negocio forzar que todo cliente sea
+estudiante. Con esto, "clientes que también son estudiantes" (o
+"facturación por estudiante") deja de ser un join implícito que solo
+funciona si se conoce Bronze, y pasa a ser una relación explícita y
+consultable en Gold.
+
+No se creó una dimensión puente ni un hecho nuevo para esto — la FK directa
+alcanza porque la relación es 1:1 (no N:N) y ya está en una columna existente
+de `dim_cliente`; agregar una tabla intermedia sería complejidad sin
+beneficio.
+
+---
+
+## 6. Transformaciones de negocio (Gold KPIs)
+
+Implementado en `sql/gold/gold_kpis.sql`, ejecutado por `build_gold.py` después
+de `gold_university.sql`, `gold_billing.sql` y `gold_crm.sql` (los KPI leen de
+los `dim_*`/`fact_*` ya construidos, incluyendo el cruce cross-domain de §5.7).
+Mismo patrón de siempre: `DROP TABLE` + `CREATE TABLE AS SELECT`, reconstruible
+en cada corrida.
+
+### 6.1 University
+
+- `kpi_tasa_aprobacion_curso` / `kpi_tasa_aprobacion_semestre`: mismo cálculo
+  (aprobadas / finalizadas), a dos granos distintos (curso y semestre) porque
+  responden preguntas distintas ("¿qué curso reprueba más?" vs. "¿mejora la
+  aprobación semestre a semestre?"). El denominador es `completed + failed`,
+  no el total de inscripciones — `active` y `dropped` no son un resultado
+  académico todavía, incluirlos en el denominador subestimaría la tasa real.
+- `kpi_promedio_notas_tipo_evaluacion`: promedio de `score`/`weight` por tipo
+  de evaluación (grano = catálogo de 5 valores).
+- `kpi_estudiantes_en_riesgo`: solo estudiantes con al menos 1 curso reprobado
+  (`HAVING`), no los 5.000 — es una lista de atención, no un catálogo completo.
+
+### 6.2 Billing
+
+- `kpi_facturacion_mensual`: grano (`anio`,`mes`), total facturado vs. total
+  cobrado por mes. Se calculan por separado (`fact_facturas.fecha_emision_key`
+  vs. `fact_pagos.fecha_pago_key`) porque, como ya se documentó en §2.5, no
+  reconcilian — este KPI expone esa brecha mes a mes en vez de esconderla.
+- `kpi_mrr_producto`: MRR **aproximado** = suscripciones en estado `active` ×
+  `precio_mensual`, por producto. Deliberadamente no se construyó un MRR
+  mes-a-mes con spine de calendario: `start_date`/`end_date` de
+  `billing_subscriptions` ya se documentó en §2.5 como poco confiable (47,7%
+  de las suscripciones `active` tienen `end_date` vencido), así que un cálculo
+  mes-a-mes basado en esas fechas heredaría el mismo ruido sin agregar
+  precisión real — se prefiere un número simple y explícitamente etiquetado
+  como aproximado sobre uno mensual falsamente preciso.
+- `kpi_suscripciones_vencidas`: lista de suscripciones `active` con
+  `end_date` ya pasado respecto a `CURRENT_DATE`. A diferencia de la decisión
+  en Silver (§4, nota final) de **no** persistir esto como columna `_dq_*`
+  porque quedaría obsoleta, aquí sí se materializa como tabla — Gold ya es
+  completamente reconstruible en cada corrida (§5.3), así que esta tabla
+  siempre refleja "vencidas a la fecha de la última corrida", que es
+  exactamente la pregunta de negocio que responde.
+
+### 6.3 CRM
+
+- `kpi_pipeline_oportunidades`: conteo/monto por `etapa` (grano = etapa, 6
+  filas).
+- `kpi_tasa_cierre_oportunidades`: tabla de una sola fila (`ganadas`/
+  `perdidas`/tasa) — patrón válido para un KPI escalar de resumen, pensado
+  para consumirse como tarjeta de número único en el dashboard (Metabase),
+  no como tabla para cruzar con otras dimensiones.
+- `kpi_engagement_cuenta`: intentos iniciales sumaban actividades por cuenta
+  contando tanto la cuenta del contacto como la de la oportunidad de cada
+  actividad (`UNION` de ambos caminos). Al validarlo apareció un hallazgo no
+  documentado antes: **de las 7.020 actividades con contacto y oportunidad a
+  la vez, 7.019 (99,99%) tienen la cuenta del contacto distinta a la cuenta
+  de la oportunidad** — verificado con
+  `dim_contacto.cuenta_key <> fact_oportunidades.cuenta_key`. Es tan
+  sistemático que no se lee como "una actividad cruzada entre dos cuentas
+  socias" sino como el mismo patrón ya visto en `crm_accounts` (§2.2,
+  generador sintético sin coherencia entre columnas relacionadas) — se
+  documenta acá como hallazgo de calidad nuevo, no bloquea el KPI pero sí
+  cambia su diseño: contar ambos caminos sin filtrar **duplicaba** el
+  conteo de actividades por cuenta (la suma total daba 24.038 sobre 17.019
+  actividades realmente vinculadas a alguna cuenta). Se corrigió para
+  atribuir cada actividad a **una sola** cuenta — la del contacto si existe,
+  si no la de la oportunidad (`COALESCE`) — de forma que la suma de
+  `num_actividades` en todo `kpi_engagement_cuenta` da exactamente 17.019,
+  sin doble conteo.
+- `kpi_conversion_leads`: grano = `origen` (`source`), no `(origen, estado)` —
+  se eligió el grano más simple porque la pregunta de negocio es "¿qué canal
+  convierte mejor?", no una matriz completa canal×estado.
+
+### 6.4 Cruce university ↔ billing
+
+- `kpi_facturacion_estudiantes`: usa la FK agregada en §5.7
+  (`dim_cliente.external_ref → dim_estudiante.student_id`) para responder
+  "cuánto factura un cliente que también es estudiante, y cómo le va
+  académicamente". Grano = `dim_estudiante` con `JOIN` (no `LEFT JOIN`) hacia
+  `dim_cliente` — da exactamente 5.000 filas, porque los 5.000 `external_ref`
+  no nulos matchean 1:1 contra los 5.000 estudiantes (§1.1): en este dataset,
+  **todo estudiante tiene un cliente asociado**, no la mitad como podría
+  sugerir el 50% de cobertura visto desde el lado de `customers` (10.000
+  clientes, solo 5.000 con `external_ref`).

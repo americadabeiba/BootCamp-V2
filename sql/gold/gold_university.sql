@@ -1,14 +1,6 @@
--- Gold — estrella university
--- Justificación del diseño: docs/decisiones.md, sección "5. Modelado Gold".
--- Dos hechos a grano distinto (inscripción vs. nota) en vez de uno solo mezclado;
--- dim_curso desnormaliza al profesor (sin dim_profesor aparte); claves surrogate
--- (SCD tipo 1, sin historial, reconstruible completo en cada corrida).
-
 CREATE SCHEMA IF NOT EXISTS gold;
 
--- ---------------------------------------------------------------------------
--- dim_tipo_evaluacion: catálogo chico (5 valores) derivado de assessment.
--- ---------------------------------------------------------------------------
+-- dim_tipo_evaluacion
 DROP TABLE IF EXISTS gold.dim_tipo_evaluacion CASCADE;
 CREATE TABLE gold.dim_tipo_evaluacion AS
 SELECT
@@ -19,9 +11,8 @@ FROM (SELECT DISTINCT assessment FROM silver.university_grades) t;
 ALTER TABLE gold.dim_tipo_evaluacion ADD PRIMARY KEY (tipo_evaluacion_key);
 CREATE UNIQUE INDEX ON gold.dim_tipo_evaluacion (tipo_evaluacion);
 
--- ---------------------------------------------------------------------------
+
 -- dim_semestre
--- ---------------------------------------------------------------------------
 DROP TABLE IF EXISTS gold.dim_semestre CASCADE;
 CREATE TABLE gold.dim_semestre AS
 SELECT
@@ -37,10 +28,9 @@ FROM silver.university_semesters;
 ALTER TABLE gold.dim_semestre ADD PRIMARY KEY (semestre_key);
 CREATE UNIQUE INDEX ON gold.dim_semestre (semester_id);
 
--- ---------------------------------------------------------------------------
--- dim_curso: desnormaliza nombre/apellido/departamento del profesor (no hay
--- dim_profesor aparte, por decisión explícita — evita snowflake innecesario).
--- ---------------------------------------------------------------------------
+
+-- dim_curso
+-- dim_profesor
 DROP TABLE IF EXISTS gold.dim_curso CASCADE;
 CREATE TABLE gold.dim_curso AS
 SELECT
@@ -62,9 +52,8 @@ LEFT JOIN silver.university_professors p
 ALTER TABLE gold.dim_curso ADD PRIMARY KEY (curso_key);
 CREATE UNIQUE INDEX ON gold.dim_curso (course_id);
 
--- ---------------------------------------------------------------------------
+
 -- dim_estudiante
--- ---------------------------------------------------------------------------
 DROP TABLE IF EXISTS gold.dim_estudiante CASCADE;
 CREATE TABLE gold.dim_estudiante AS
 SELECT
@@ -82,11 +71,8 @@ FROM silver.university_students;
 ALTER TABLE gold.dim_estudiante ADD PRIMARY KEY (estudiante_key);
 CREATE UNIQUE INDEX ON gold.dim_estudiante (student_id);
 
--- ---------------------------------------------------------------------------
--- fact_inscripciones: grano = 1 fila por enrollment_id.
--- status y attempt_number son atributos descriptivos (dimensión degenerada),
--- no medidas.
--- ---------------------------------------------------------------------------
+
+-- fact_inscripciones
 DROP TABLE IF EXISTS gold.fact_inscripciones CASCADE;
 CREATE TABLE gold.fact_inscripciones AS
 SELECT
@@ -112,12 +98,7 @@ ALTER TABLE gold.fact_inscripciones
     ADD FOREIGN KEY (fecha_inscripcion_key) REFERENCES gold.dim_fecha (fecha_key);
 CREATE INDEX ON gold.fact_inscripciones (fecha_inscripcion_key);
 
--- ---------------------------------------------------------------------------
--- fact_notas: grano = 1 fila por grade_id (más fino que fact_inscripciones).
--- No repite estudiante/curso/semestre: se navega a través de
--- fact_inscripciones vía enrollment_id (patrón encabezado-detalle).
--- score/weight son las medidas; ambas no aditivas (ver docs/decisiones.md).
--- ---------------------------------------------------------------------------
+-- fact_notas
 DROP TABLE IF EXISTS gold.fact_notas CASCADE;
 CREATE TABLE gold.fact_notas AS
 SELECT

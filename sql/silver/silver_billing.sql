@@ -1,16 +1,7 @@
--- Silver — dominio billing
--- Reglas y justificación de cada decisión: docs/decisiones.md (secciones 2, 3 y 4).
--- Política general: no se borra ni se "corrige" ninguna fila por inconsistencia de
--- fecha/negocio; se tipa, se estandariza y se marca con columnas _dq_* cuando aplica.
-
 CREATE SCHEMA IF NOT EXISTS silver;
 
--- ---------------------------------------------------------------------------
--- customers: created_at trae hora (verificado: 100% de las filas), se tipa
--- como TIMESTAMP (no DATE) para no perder precisión. 78,6% de los customers
--- vinculados a un student por external_ref tienen país distinto — se marca
--- (docs/decisiones.md §1.1 y §2.4).
--- ---------------------------------------------------------------------------
+
+-- customers
 DROP TABLE IF EXISTS silver.billing_customers CASCADE;
 CREATE TABLE silver.billing_customers AS
 SELECT
@@ -34,9 +25,8 @@ LEFT JOIN bronze.university_students s
 
 ALTER TABLE silver.billing_customers ADD PRIMARY KEY (customer_id);
 
--- ---------------------------------------------------------------------------
--- products: sin hallazgos de calidad. Solo tipado.
--- ---------------------------------------------------------------------------
+
+-- products
 DROP TABLE IF EXISTS silver.billing_products CASCADE;
 CREATE TABLE silver.billing_products AS
 SELECT
@@ -54,11 +44,7 @@ FROM bronze.billing_products;
 
 ALTER TABLE silver.billing_products ADD PRIMARY KEY (product_id);
 
--- ---------------------------------------------------------------------------
--- subscriptions: 5,3% con start_date >= end_date — se marca, no se corrige
--- (no hay forma de saber cuál de las dos fechas es la errónea;
--- docs/decisiones.md §2.5 y §3).
--- ---------------------------------------------------------------------------
+-- subscriptions
 DROP TABLE IF EXISTS silver.billing_subscriptions CASCADE;
 CREATE TABLE silver.billing_subscriptions AS
 SELECT
@@ -77,11 +63,7 @@ FROM bronze.billing_subscriptions;
 
 ALTER TABLE silver.billing_subscriptions ADD PRIMARY KEY (subscription_id);
 
--- ---------------------------------------------------------------------------
--- invoices: ~100% de las facturas con total no reconciliable contra la suma
--- de invoice_items — se marca; invoices.total se mantiene como fuente de
--- verdad de ingresos (docs/decisiones.md §2.5, decisión explícita).
--- ---------------------------------------------------------------------------
+-- invoices
 DROP TABLE IF EXISTS silver.billing_invoices CASCADE;
 CREATE TABLE silver.billing_invoices AS
 SELECT
@@ -109,11 +91,7 @@ LEFT JOIN (
 
 ALTER TABLE silver.billing_invoices ADD PRIMARY KEY (invoice_id);
 
--- ---------------------------------------------------------------------------
--- invoice_items: line_total = quantity * unit_price se cumple en el 100% de
--- las filas (validado). Duplicados (invoice_id+product_id) son escenario de
--- negocio válido, no se deduplican (docs/decisiones.md §2.2).
--- ---------------------------------------------------------------------------
+-- invoice_items
 DROP TABLE IF EXISTS silver.billing_invoice_items CASCADE;
 CREATE TABLE silver.billing_invoice_items AS
 SELECT
@@ -131,10 +109,7 @@ FROM bronze.billing_invoice_items;
 
 ALTER TABLE silver.billing_invoice_items ADD PRIMARY KEY (invoice_item_id);
 
--- ---------------------------------------------------------------------------
--- payments: sin hallazgos de calidad (sin huérfanas, sin pagos anteriores a
--- la emisión de su factura). Solo tipado.
--- ---------------------------------------------------------------------------
+-- payments
 DROP TABLE IF EXISTS silver.billing_payments CASCADE;
 CREATE TABLE silver.billing_payments AS
 SELECT

@@ -1,19 +1,6 @@
--- Gold — estrella crm + mart_leads
--- Justificación del diseño: docs/decisiones.md, sección "5. Modelado Gold".
--- Dos hechos separados (oportunidades vs. actividades): "cuánto vendo" y
--- "cuánto contacto genero" son preguntas de negocio distintas.
--- leads no tiene hecho ni dimensión propia: es mart_leads, una tabla analítica
--- aislada conectada solo a dim_fecha (confirmado: 0% de match hacia contacts,
--- docs/decisiones.md §1.3).
-
 CREATE SCHEMA IF NOT EXISTS gold;
 
--- ---------------------------------------------------------------------------
--- dim_cuenta: se agrega name_occurrence_count (informativo, no booleano) para
--- que Gold sepa qué cuentas comparten nombre con otras (docs/decisiones.md
--- §2.2 — no son duplicados, son empresas distintas, pero es útil saber que
--- el nombre no es único).
--- ---------------------------------------------------------------------------
+-- dim_cuenta
 DROP TABLE IF EXISTS gold.dim_cuenta CASCADE;
 CREATE TABLE gold.dim_cuenta AS
 SELECT
@@ -31,10 +18,7 @@ FROM silver.crm_accounts;
 ALTER TABLE gold.dim_cuenta ADD PRIMARY KEY (cuenta_key);
 CREATE UNIQUE INDEX ON gold.dim_cuenta (account_id);
 
--- ---------------------------------------------------------------------------
--- dim_contacto: referencia a dim_cuenta (outrigger — un contacto pertenece a
--- una cuenta, no es snowflaking del hecho).
--- ---------------------------------------------------------------------------
+-- dim_contacto
 DROP TABLE IF EXISTS gold.dim_contacto CASCADE;
 CREATE TABLE gold.dim_contacto AS
 SELECT
@@ -56,13 +40,7 @@ CREATE UNIQUE INDEX ON gold.dim_contacto (contact_id);
 ALTER TABLE gold.dim_contacto
     ADD FOREIGN KEY (cuenta_key) REFERENCES gold.dim_cuenta (cuenta_key);
 
--- ---------------------------------------------------------------------------
--- fact_oportunidades: grano = 1 fila por opportunity_id. Medida: amount
--- (no aditiva de forma trivial entre stages abiertos/cerrados — ver
--- docs/decisiones.md antes de sumarla sin filtrar por stage).
--- fecha_cierre_estimada_key usa close_date_estimada (reinterpretada en
--- docs/decisiones.md §2.6: es una fecha objetivo, no un cierre real).
--- ---------------------------------------------------------------------------
+-- fact_oportunidades
 DROP TABLE IF EXISTS gold.fact_oportunidades CASCADE;
 CREATE TABLE gold.fact_oportunidades AS
 SELECT
@@ -85,12 +63,7 @@ ALTER TABLE gold.fact_oportunidades
     ADD FOREIGN KEY (fecha_cierre_estimada_key) REFERENCES gold.dim_fecha (fecha_key);
 CREATE INDEX ON gold.fact_oportunidades (fecha_creacion_key);
 
--- ---------------------------------------------------------------------------
--- fact_actividades: grano = 1 fila por activity_id. contacto_key y
--- opportunity_id nulos por diseño (una actividad se asocia a uno u otro, no
--- necesariamente a ambos; docs/decisiones.md §2.1). opportunity_id referencia
--- fact_oportunidades directamente (patrón encabezado-detalle).
--- ---------------------------------------------------------------------------
+-- fact_actividades
 DROP TABLE IF EXISTS gold.fact_actividades CASCADE;
 CREATE TABLE gold.fact_actividades AS
 SELECT
@@ -113,12 +86,7 @@ ALTER TABLE gold.fact_actividades
     ADD FOREIGN KEY (fecha_ocurrencia_key) REFERENCES gold.dim_fecha (fecha_key);
 CREATE INDEX ON gold.fact_actividades (fecha_ocurrencia_key);
 
--- ---------------------------------------------------------------------------
--- mart_leads: tabla analítica aislada (no es estrella: sin FK hacia
--- contacts/accounts/opportunities por diseño — docs/decisiones.md §1.3). Solo
--- se conecta a dim_fecha, para responder "cuántos leads entraron/se
--- perdieron en tal período" agrupando por fecha_creacion/source/status.
--- ---------------------------------------------------------------------------
+-- mart_leads
 DROP TABLE IF EXISTS gold.mart_leads CASCADE;
 CREATE TABLE gold.mart_leads AS
 SELECT

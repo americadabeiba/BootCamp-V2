@@ -1,16 +1,6 @@
--- Gold — estrella billing
--- Justificación del diseño: docs/decisiones.md, sección "5. Modelado Gold".
--- Dos hechos separados (facturas vs. pagos) porque "cuánto se facturó" y
--- "cuánto se cobró" son preguntas de negocio distintas (docs/decisiones.md ya
--- documentó que invoices.total casi nunca reconcilia con sus pagos/items).
--- fact_invoice_items no se modela en esta primera pasada (alcance acotado
--- explícitamente, ver docs/decisiones.md §5).
-
 CREATE SCHEMA IF NOT EXISTS gold;
 
--- ---------------------------------------------------------------------------
 -- dim_cliente
--- ---------------------------------------------------------------------------
 DROP TABLE IF EXISTS gold.dim_cliente CASCADE;
 CREATE TABLE gold.dim_cliente AS
 SELECT
@@ -28,10 +18,10 @@ FROM silver.billing_customers;
 
 ALTER TABLE gold.dim_cliente ADD PRIMARY KEY (cliente_key);
 CREATE UNIQUE INDEX ON gold.dim_cliente (customer_id);
+ALTER TABLE gold.dim_cliente
+    ADD FOREIGN KEY (external_ref) REFERENCES gold.dim_estudiante (student_id);
 
--- ---------------------------------------------------------------------------
 -- dim_producto
--- ---------------------------------------------------------------------------
 DROP TABLE IF EXISTS gold.dim_producto CASCADE;
 CREATE TABLE gold.dim_producto AS
 SELECT
@@ -47,10 +37,7 @@ FROM silver.billing_products;
 ALTER TABLE gold.dim_producto ADD PRIMARY KEY (producto_key);
 CREATE UNIQUE INDEX ON gold.dim_producto (product_id);
 
--- ---------------------------------------------------------------------------
--- fact_suscripciones: grano = 1 fila por subscription_id.
--- status es dimensión degenerada, no medida.
--- ---------------------------------------------------------------------------
+-- fact_suscripciones
 DROP TABLE IF EXISTS gold.fact_suscripciones CASCADE;
 CREATE TABLE gold.fact_suscripciones AS
 SELECT
@@ -74,10 +61,7 @@ ALTER TABLE gold.fact_suscripciones
     ADD FOREIGN KEY (fecha_inicio_key) REFERENCES gold.dim_fecha (fecha_key),
     ADD FOREIGN KEY (fecha_fin_key) REFERENCES gold.dim_fecha (fecha_key);
 
--- ---------------------------------------------------------------------------
--- fact_facturas: grano = 1 fila por invoice_id. Medida: total (fuente de
--- verdad de ingresos, decisión ya tomada en docs/decisiones.md §2.5).
--- ---------------------------------------------------------------------------
+-- fact_facturas
 DROP TABLE IF EXISTS gold.fact_facturas CASCADE;
 CREATE TABLE gold.fact_facturas AS
 SELECT
@@ -101,10 +85,7 @@ ALTER TABLE gold.fact_facturas
     ADD FOREIGN KEY (fecha_vencimiento_key) REFERENCES gold.dim_fecha (fecha_key);
 CREATE INDEX ON gold.fact_facturas (fecha_emision_key);
 
--- ---------------------------------------------------------------------------
--- fact_pagos: grano = 1 fila por payment_id. Referencia a fact_facturas
--- (patrón encabezado-detalle, igual que fact_notas -> fact_inscripciones).
--- ---------------------------------------------------------------------------
+-- fact_pagos
 DROP TABLE IF EXISTS gold.fact_pagos CASCADE;
 CREATE TABLE gold.fact_pagos AS
 SELECT

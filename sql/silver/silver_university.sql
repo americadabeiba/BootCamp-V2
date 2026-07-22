@@ -1,13 +1,7 @@
--- Silver — dominio university
--- Reglas y justificación de cada decisión: docs/decisiones.md (secciones 2, 3 y 4).
--- Política general: no se borra ni se "corrige" ninguna fila por inconsistencia de
--- fecha/negocio; se tipa, se estandariza y se marca con columnas _dq_* cuando aplica.
-
 CREATE SCHEMA IF NOT EXISTS silver;
 
--- ---------------------------------------------------------------------------
--- semesters: sin hallazgos de calidad (docs/decisiones.md §2.5). Solo tipado.
--- ---------------------------------------------------------------------------
+
+-- semesters
 DROP TABLE IF EXISTS silver.university_semesters CASCADE;
 CREATE TABLE silver.university_semesters AS
 SELECT
@@ -25,10 +19,8 @@ FROM bronze.university_semesters;
 
 ALTER TABLE silver.university_semesters ADD PRIMARY KEY (semester_id);
 
--- ---------------------------------------------------------------------------
--- professors: 6 pares nombre+apellido repetidos con professor_id distinto — no
--- se deduplica (sin evidencia de que sean la misma persona). Solo tipado.
--- ---------------------------------------------------------------------------
+
+-- professors
 DROP TABLE IF EXISTS silver.university_professors CASCADE;
 CREATE TABLE silver.university_professors AS
 SELECT
@@ -46,10 +38,8 @@ FROM bronze.university_professors;
 
 ALTER TABLE silver.university_professors ADD PRIMARY KEY (professor_id);
 
--- ---------------------------------------------------------------------------
--- courses: 88% de los cursos con profesor de otro departamento
--- (docs/decisiones.md §2.5) — se preserva y se marca, no se corrige.
--- ---------------------------------------------------------------------------
+
+-- courses
 DROP TABLE IF EXISTS silver.university_courses CASCADE;
 CREATE TABLE silver.university_courses AS
 SELECT
@@ -70,11 +60,8 @@ LEFT JOIN bronze.university_professors p
 
 ALTER TABLE silver.university_courses ADD PRIMARY KEY (course_id);
 
--- ---------------------------------------------------------------------------
--- students: 3 ternas nombre+apellido+nacimiento repetidas con student_id/email
--- distinto — no se deduplica (docs/decisiones.md §2.2). 37% con enrolled_at
--- (alta) posterior a su primera inscripción real — se marca (§2.5).
--- ---------------------------------------------------------------------------
+
+-- students
 DROP TABLE IF EXISTS silver.university_students CASCADE;
 CREATE TABLE silver.university_students AS
 SELECT
@@ -99,12 +86,8 @@ LEFT JOIN (
 
 ALTER TABLE silver.university_students ADD PRIMARY KEY (student_id);
 
--- ---------------------------------------------------------------------------
--- enrollments: 23 pares con la misma clave de negocio (student+course+semester)
--- pero status/enrolled_at distintos — son retomas legítimas, NO se deduplica
--- (docs/decisiones.md §2.2); se agrega attempt_number para distinguirlas en
--- Gold. 91% con enrolled_at fuera del rango del semestre — se marca (§2.5).
--- ---------------------------------------------------------------------------
+
+-- enrollments
 DROP TABLE IF EXISTS silver.university_enrollments CASCADE;
 CREATE TABLE silver.university_enrollments AS
 SELECT
@@ -133,12 +116,8 @@ LEFT JOIN bronze.university_semesters sem
 
 ALTER TABLE silver.university_enrollments ADD PRIMARY KEY (enrollment_id);
 
--- ---------------------------------------------------------------------------
--- grades: 17,6% duplicado real por (enrollment_id, assessment) — SE
--- DEDUPLICA, conservando la nota con graded_at más reciente (se asume
--- corrección/recalificación; docs/decisiones.md §2.2). 48,7% calificada antes
--- de la inscripción y 44,7% después del fin de semestre — se marca (§2.5).
--- ---------------------------------------------------------------------------
+
+-- grades
 DROP TABLE IF EXISTS silver.university_grades CASCADE;
 CREATE TABLE silver.university_grades AS
 WITH ranked AS (

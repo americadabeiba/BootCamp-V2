@@ -1,17 +1,7 @@
--- Silver — dominio crm
--- Reglas y justificación de cada decisión: docs/decisiones.md (secciones 2, 3 y 4).
--- Política general: no se borra ni se "corrige" ninguna fila por inconsistencia de
--- fecha/negocio; se tipa, se estandariza y se marca con columnas _dq_* cuando aplica.
-
 CREATE SCHEMA IF NOT EXISTS silver;
 
--- ---------------------------------------------------------------------------
--- accounts: 599 nombres repetidos con industry/country distintos por
--- account_id -> son empresas distintas, NO se deduplica (docs/decisiones.md
--- §2.2). Se agrega name_occurrence_count informativo (no es un _dq_ booleano,
--- es un conteo para que Gold pueda decidir si el nombre es confiable como
--- identificador de negocio).
--- ---------------------------------------------------------------------------
+
+-- accounts
 DROP TABLE IF EXISTS silver.crm_accounts CASCADE;
 CREATE TABLE silver.crm_accounts AS
 SELECT
@@ -31,10 +21,8 @@ FROM bronze.crm_accounts;
 
 ALTER TABLE silver.crm_accounts ADD PRIMARY KEY (account_id);
 
--- ---------------------------------------------------------------------------
--- contacts: 49,7% con created_at anterior al de su cuenta — imposible
--- cronológicamente, se marca sin corregir (docs/decisiones.md §2.5 y §3).
--- ---------------------------------------------------------------------------
+
+-- contacts
 DROP TABLE IF EXISTS silver.crm_contacts CASCADE;
 CREATE TABLE silver.crm_contacts AS
 SELECT
@@ -58,10 +46,7 @@ LEFT JOIN bronze.crm_accounts a
 
 ALTER TABLE silver.crm_contacts ADD PRIMARY KEY (contact_id);
 
--- ---------------------------------------------------------------------------
--- leads: sin FK por diseño, tabla aislada (docs/decisiones.md §1.3). Solo
--- tipado.
--- ---------------------------------------------------------------------------
+-- leads
 DROP TABLE IF EXISTS silver.crm_leads CASCADE;
 CREATE TABLE silver.crm_leads AS
 SELECT
@@ -81,12 +66,7 @@ FROM bronze.crm_leads;
 
 ALTER TABLE silver.crm_leads ADD PRIMARY KEY (lead_id);
 
--- ---------------------------------------------------------------------------
--- opportunities: close_date presente en el 100% de las filas (incluidas
--- etapas abiertas) -> se reinterpreta como fecha de cierre ESTIMADA, no real
--- (docs/decisiones.md §2.6). 34,3% con close_date anterior a created_at,
--- sigue marcándose bajo esa lectura.
--- ---------------------------------------------------------------------------
+-- opportunities
 DROP TABLE IF EXISTS silver.crm_opportunities CASCADE;
 CREATE TABLE silver.crm_opportunities AS
 SELECT
@@ -106,10 +86,7 @@ FROM bronze.crm_opportunities;
 
 ALTER TABLE silver.crm_opportunities ADD PRIMARY KEY (opportunity_id);
 
--- ---------------------------------------------------------------------------
--- opportunity_contacts: tabla puente, sin PK propia en origen. Sin
--- duplicados ni huérfanos (docs/decisiones.md §2.2 y §2.4). Solo tipado.
--- ---------------------------------------------------------------------------
+-- opportunity_contacts
 DROP TABLE IF EXISTS silver.crm_opportunity_contacts CASCADE;
 CREATE TABLE silver.crm_opportunity_contacts AS
 SELECT
@@ -125,12 +102,8 @@ FROM bronze.crm_opportunity_contacts;
 ALTER TABLE silver.crm_opportunity_contacts
     ADD PRIMARY KEY (opportunity_id, contact_id);
 
--- ---------------------------------------------------------------------------
--- activities: contact_id/opportunity_id nulos por diseño (una actividad se
--- asocia a uno u otro, no a ambos; docs/decisiones.md §2.1) — no se fuerza
--- NOT NULL. 18,4% / 37,8% ocurrida antes de la creación del contacto /
--- oportunidad asociada — se marca (docs/decisiones.md §2.5 y §2.6).
--- ---------------------------------------------------------------------------
+
+-- activities
 DROP TABLE IF EXISTS silver.crm_activities CASCADE;
 CREATE TABLE silver.crm_activities AS
 SELECT
